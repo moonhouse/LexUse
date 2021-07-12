@@ -22,7 +22,7 @@ debug = False
 debug_duplicates = False
 debug_excludes = True
 debug_exclude_list = False
-debug_json = False
+debug_json = True
 debug_riksdagen = False
 debug_senses = False
 debug_sentences = True
@@ -30,4 +30,4 @@ debug_summaries = True
 
 # Global variables
 login_instance = None
-loglevel = None
+loglevel = 10

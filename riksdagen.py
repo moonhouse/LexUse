@@ -3,6 +3,9 @@ import asyncio
 import logging
 import re
 import httpx
+from datetime import datetime, timezone
+import redis
+import json
 
 import config
 import loglevel
@@ -20,12 +23,11 @@ logger.addHandler(file_handler)
 # Constants
 baseurl = "https://data.riksdagen.se/dokument/"
 
-
 def get_result_count(word):
     # First find out the number of results
     url = (f"http://data.riksdagen.se/dokumentlista/?sok={word}" +
            "&sort=rel&sortorder=desc&utformat=json&a=s&p=1")
-    r = httpx.get(url)
+    r = httpx.get(url, timeout=10.0)
     data = r.json()
     results = int(data["dokumentlista"]["@traffar"])
     logging.info(f"results:{results}")
@@ -36,7 +38,7 @@ async def async_fetch(word):
     # This function is called for every task.
     async def get(url, session):
         """Accepts a url and a httpx session"""
-        response = await session.get(url)
+        response = await session.get(url, timeout=10.0)
         return response
 
     # Get total results count
@@ -265,9 +267,35 @@ def extract_summaries_from_records(records, data):
     return summaries
 
 
-def get_records(data):
+def now_813():
+    return datetime.utcnow().replace(
+                    tzinfo=timezone.utc
+                ).replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                ).strftime("+%Y-%m-%dT%H:%M:%SZ/11")
+
+def adjust_datetime(pub_date):
+    return datetime.fromisoformat(pub_date).replace(
+                    tzinfo=timezone.utc
+                ).replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                ).strftime("+%Y-%m-%dT%H:%M:%SZ/11")    
+
+def get_records(data,r):
     word = data["word"]
-    records = process_async_responses(word)
+    records = r.get(f"riksdagen--{word}")
+    logger.debug(f"Records from Redis: {records}")
+    if records is None:
+        records = process_async_responses(word)
+        if records is None:
+            records = []
+        r.set(f"riksdagen--{word}", json.dumps(records))
+    else:
+        records = json.loads(records)
     if records is not None:
         if config.debug:
             print("Looping through records from Riksdagen")
@@ -294,5 +322,9 @@ def get_records(data):
             if len(suitable_sentences) > 0:
                 for sentence in suitable_sentences:
                     # Make sure the riksdagen_document_id follows
+                    print(f"Result data: {result_data}| S {sentence}")
                     unsorted_sentences[sentence] = result_data
+                    unsorted_sentences[sentence]["text"] = sentence
+                    unsorted_sentences[sentence]["quickstatement"] = f"""P5831|{config.language_code}:"{sentence.rstrip()}"|P6191|Q104597585""",
+                    unsorted_sentences[sentence]["reference_quickstatement"] = f"""S248|Q21592569|S8433|"{result_data["document_id"]}"|S813|{now_813()}|S577|{adjust_datetime(result_data["date"])}|S3865|Q47461344"""
         return unsorted_sentences

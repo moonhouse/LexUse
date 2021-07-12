@@ -1,0 +1,65 @@
+[
+    {
+        "date": "2019-12-19",
+        "document_id": "H701NU4",
+        "language_style": "formal",
+        "line": null,
+        "source": "riksdagen",
+        "text": "Vid inspektioner har rost i reaktorinneslutningens bottenplåt påträffats.",
+        "type_of_reference": "written"
+    },
+    {
+        "date": "2010-04-06",
+        "document_id": "GX01TU15",
+        "language_style": "formal",
+        "line": null,
+        "source": "riksdagen",
+        "text": "CMA kalciummagnesiumacetat ger inte rost på bilar i lika hög grad som salt.",
+        "type_of_reference": "written"
+    },
+    {
+        "date": "1992-01-27",
+        "document_id": "GF02T347",
+        "language_style": "formal",
+        "line": null,
+        "source": "riksdagen",
+        "text": "Saltet fräter sönder material och framkallar rost som bryter ner plåt och stål.",
+        "type_of_reference": "written"
+    },
+    {
+        "date": "2020-11-25",
+        "document_id": "H811677",
+        "language_style": "formal",
+        "line": null,
+        "source": "riksdagen",
+        "text": "Regler som innebär att alla rörledningar under jord behöver säkras mot rost och fukt.",
+        "type_of_reference": "written"
+    },
+    {
+        "date": "1991-01-25",
+        "document_id": "GE02T341",
+        "language_style": "formal",
+        "line": null,
+        "source": "riksdagen",
+        "text": "Saltet fräter sönder material och framkallar rost som ytterligare bryter ner plåt och stål.",
+        "type_of_reference": "written"
+    },
+    {
+        "date": null,
+        "document_id": null,
+        "language_style": "formal",
+        "line": 485394,
+        "source": "europarl",
+        "text": "Denna skadegörare orsakar rost hos citrusfrukter och den påföljande uppkomsten av svarta fläckar på apelsinernas skal.\n",
+        "type_of_reference": "written"
+    },
+    {
+        "date": null,
+        "document_id": null,
+        "language_style": "formal",
+        "line": 1102316,
+        "source": "europarl",
+        "text": "Detta är vårt budskap, detta är parlamentets budskap till nuvarande och framtida generationer, så att inte tiden likt rost fräter sönder minnet utan i stället håller minnet levande.\n",
+        "type_of_reference": "written"
+    }
+]

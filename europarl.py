@@ -3,7 +3,8 @@ import logging
 
 import config
 import loglevel
-
+import re
+from collections import Counter
 
 # TODO move common code to common swedish module
 logger = logging.getLogger(__name__)
@@ -16,10 +17,23 @@ logger.level = logger.getEffectiveLevel()
 file_handler = logging.FileHandler("europarl.log")
 logger.addHandler(file_handler)
 
+def find_words():
+    with open(f'data_{config.language_code}.txt', 'r') as f:
+        print("Opened file.")
+        print("Reading into string.")
+        all_text = f.read()
+        print("Splitting into words.")
+        words = re.split('[\ ,\.\?\(\);\n\]\[:…\xa0”"\/!&]', all_text.lower())
+        print("Counting")
+        counts = Counter(words)
+        print("Showing 10 most common")
+        print(counts.most_common(100))
+    return list(counts)
 
 def find_lines(word):
     """Returns a dictionary with line as
     key and linenumber as value"""
+
     records = {}
     print(f"Looking for {word} in the Europarl corpus...")
     with open(f'data_{config.language_code}.txt', 'r') as searchfile:
@@ -30,24 +44,29 @@ def find_lines(word):
             if f" {word} " in line:
                 logger.debug(f"matching line:{line}")
                 records[line] = dict(
+                    text=line,
                     line=number,
                     document_id=None,
                     date=None,
                     source="europarl",
                     language_style="formal",
-                    type_of_reference="written"
+                    type_of_reference="written",
+                    quickstatement = f"""P5831|{config.language_code}:"{line.rstrip()}"|P6191|Q104597585""",
+                    reference_quickstatement = f"""S248|Q5412081|S813|+2021-07-01T00:00:00Z/11|S577|+2012-05-12T00:00:00Z/11|S854|"http://www.statmt.org/europarl/v7/{config.language_code}-en.tgz"|S7793|"europarl-v7.{config.language_code}-en.{config.language_code}"|S7421|"{number}"|S3865|Q47461344"""
                 )
-            # if line.split(" ")[0] == word:
-            #     print("Found in beginning of line")
-            #     records[line] = number
-            # if line.split(" ")[-1] == word:
-            #     print("Found in end of line")
-            #     records[line] = number
             number += 1
     logger.debug(f"records:{records}")
     print(f"Found {len(records)} sentences")
     return records
 
+
+def get_records_web(data,rb):
+    word = data["word"]
+    if(rb.bfExists('europarl',word)==0):
+        print(f"Skipping looking for {word} in the Europarl corpus...")
+        return []
+    else:
+        return find_lines(word)
 
 def get_records(data):
     word = data["word"]

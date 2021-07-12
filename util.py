@@ -13,8 +13,10 @@ from wikibaseintegrator import wbi_core, wbi_login
 import config
 import download_data
 import europarl
-import loglevel
+#import loglevel
 import riksdagen
+import redis
+from redisbloom.client import Client
 
 # Terminology used
 # record = sentence + data
@@ -36,7 +38,8 @@ logger = logging.getLogger(__name__)
 if config.loglevel is None:
     # Set loglevel
     print("Setting loglevel in config")
-    loglevel.set_loglevel()
+    config.loglevel = 40
+    #loglevel.set_loglevel()
 logger.setLevel(config.loglevel)
 logger.level = logger.getEffectiveLevel()
 file_handler = logging.FileHandler("util.log")
@@ -44,6 +47,9 @@ logger.addHandler(file_handler)
 
 # Constants
 wd_prefix = "http://www.wikidata.org/entity/"
+
+r = redis.Redis()
+rb = Client()
 
 #
 # Program flow
@@ -101,7 +107,7 @@ def sparql_query(query):
     # from https://stackoverflow.com/questions/55961615/
     # how-to-integrate-wikidata-query-in-python
     url = 'https://query.wikidata.org/sparql'
-    r = httpx.get(url, params={'format': 'json', 'query': query})
+    r = httpx.get(url, params={'format': 'json', 'query': query}, timeout=15)
     data = r.json()
     # pprint(data)
     results = data["results"]["bindings"]
@@ -110,7 +116,7 @@ def sparql_query(query):
         print(f"No {config.language} lexemes containing " +
               "both a sense, forms with " +
               "grammatical features and missing a usage example was found")
-        exit(0)
+        return results
     else:
         return results
 
@@ -128,9 +134,32 @@ def count_number_of_senses_with_P5137(lid):
       ?sense wdt:P5137 [].
     }}'''))
     count = int(result[0]["count"]["value"])
-    logging.debug(f"count:{count}")
+    logger.debug(f"count:{count}")
     return count
 
+def fetch_document_qids(doc_ids):
+    logger.debug(f"fetch doucment qids {doc_ids} {len(set(doc_ids))}")
+    if len(set(doc_ids))==0:
+        logger.debug("No doc IDs so returning empty dict.")
+        return {}
+    qm = dict(zip(list(set(doc_ids)),r.mget(list(set(doc_ids)))))
+    documents = {k: v.decode() for k, v in qm.items() if v is not None}
+    logger.debug(f"Got doc qids from cache: {documents}")
+    missing_doc_ids = [k for k, v in qm.items() if v is None]
+    doc_id_string = ",".join(f'"{i}"' for i in missing_doc_ids)
+    logger.debug(f"Will fetch qids for docs {doc_id_string}")
+    result = (sparql_query(f'''
+    SELECT ?docid ?id WHERE {{
+?item wdt:P8433 ?docid.
+  BIND (SUBSTR(STR(?item),STRLEN("http://www.wikidata.org/entity/")+1) AS ?id) 
+  FILTER(?docid IN ( {doc_id_string} ))
+}}
+    '''))
+    for row in result:
+        documents[row["docid"]["value"]] = row["id"]["value"]
+    if len(documents) > 0:
+        r.mset(documents)
+    return documents
 
 def fetch_senses(lid):
     """Returns dictionary with numbers as keys and a dictionary as value with
@@ -149,14 +178,15 @@ def fetch_senses(lid):
       # Exclude lexemes without a linked QID from at least one sense
       ?sense wdt:P5137 [].
     }}'''))
-    senses = {}
+    senses = []
     number = 1
     for row in result:
-        senses[number] = {
+        senses.append({
             "sense_id": row["sense"]["value"].replace(wd_prefix, ""),
-            "gloss": row["gloss"]["value"]
-        }
-        number += 1
+            "gloss": row["gloss"]["value"],
+            "quickstatement": f"P6072|{row['sense']['value'].replace(wd_prefix, '')}"
+
+        })
     logging.debug(f"senses:{senses}")
     return senses
 
@@ -249,6 +279,7 @@ def add_usage_example(
         value=sense_id,
         is_qualifier=True
     )
+    # P6191|Q104597585|P3865|Q47461344
     if language_style == "formal":
         style = "Q104597585"
     else:
@@ -433,7 +464,8 @@ def prompt_choose_sense(senses):
             if choice > 0 and choice <= len(senses):
                 return {
                     "sense_id": senses[choice]["sense_id"],
-                    "gloss": senses[choice]["gloss"]
+                    "gloss": senses[choice]["gloss"],
+                    "quickstatement": f"P6072|{senses[choice]['sense_id']}"
                 }
             else:
                 print("Cancelled adding this sentence.")
@@ -550,6 +582,55 @@ def prompt_sense_approval(sentence=None, data=None):
                           "if the sparql result was sane")
             return False
 
+
+def now_813():
+    return datetime.utcnow().replace(
+                    tzinfo=timezone.utc
+                ).replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                ).strftime("+%Y-%m-%dT%H:%M:%SZ/11")
+
+
+def ignore_form(lid):
+    r.lpush('ignored-forms',lid)
+    r.ltrim('ignored-forms',0,1000)
+    return 'maybeok'
+
+def sleep_form(lid):
+    sleep_until = int(time.time())+86400 
+    dict = {lid: sleep_until}
+    r.zadd('sleeping-forms',dict)
+    return {"sleep_until": sleep_until}
+
+def get_sentences_from_apis_web(data):
+    """Returns a dict with sentences as key and id as value"""
+    word = data["word"]
+    if config.language_code == "sv":
+        records = {}
+        # Europarl corpus
+        # Download first
+        download_data.fetch()
+        europarl_records = europarl.get_records_web(data,rb)
+        for record in europarl_records:
+            records[record] = europarl_records[record]
+        # Riksdagen API is slow, only use it if we must
+        if len(europarl_records) < 50:
+            riksdagen_records = riksdagen.get_records(data,r)
+            doc_ids = [x['document_id'] for x in riksdagen_records.values()]
+            logger.debug(f"Document IDs: {doc_ids}")
+            doc_qid_mapping = fetch_document_qids(doc_ids)
+            logger.debug(f"Document/qid mapping: {doc_qid_mapping}")
+            for record in riksdagen_records:
+                records[record] = riksdagen_records[record]
+                if riksdagen_records[record]["document_id"] in doc_qid_mapping.keys():
+                    print(f"DOC_ID: {riksdagen_records[record]['document_id']}")
+                    print(f"docids: {doc_qid_mapping}")
+                    riksdagen_records[record]["wikidata_reference"] = doc_qid_mapping[riksdagen_records[record]["document_id"]]
+                    riksdagen_records[record]["reference_quickstatement"] = f"""S248|{doc_qid_mapping[riksdagen_records[record]["document_id"]]}|S813|{now_813()}"""
+        logger.debug(f"returning from apis:{records}")
+        return records
 
 def get_sentences_from_apis(result):
     """Returns a dict with sentences as key and id as value"""
@@ -679,6 +760,20 @@ def save_to_exclude_list(data: dict):
             json.dump(exclude_list, outfile, ensure_ascii=False)
 
 
+def get_examples(data):
+    # This dict holds the sentence as key and
+    # riksdagen_document_id or other id as value
+    is_empty = r.sismember('empty-examples',data['word'])
+    if is_empty:
+        return []
+    sentences_and_result_data = get_sentences_from_apis_web(data)
+    results = list(sentences_and_result_data.values())
+    results.sort(key=lambda x: len(x["text"]))
+    if len(results)==0:
+        r.sadd('empty-examples', data['word'])
+    return results
+
+
 def process_result(result, data):
     # ask to continue
     # if yes_no_question(f"\nWork on {data['word']}?"):
@@ -772,6 +867,21 @@ def in_exclude_list(data: dict):
         # No exclude_list
         return False
 
+def process_lexeme_data_web(results):
+    words = []
+    empty_results = [w.decode() for w in r.smembers('empty-examples')]
+    ignored_forms = [f.decode() for f in r.lrange('ignored-forms',0,1000)]
+    sleeping_forms = [f.decode() for f in r.zrangebyscore('sleeping-forms',time.time(), float('inf'))]
+    r.zremrangebyscore('sleeping-forms',float('-inf'),time.time())
+    for result in results:
+        data = extract_data(result)
+        words.append(data)
+    logging.debug(f"{len(words)} lexemes fetched.")
+    words = [w for w in words if w['word'] not in empty_results]
+    logger.debug(f"{len(words)} lexemes after removing empty results.")
+    words = [w for w in words if w['form_id'] not in (ignored_forms + sleeping_forms)]
+    logger.debug(f"{len(words)} lexemes after removing ignored forms.")
+    return words
 
 def process_lexeme_data(results):
     """Go through the SPARQL results randomly"""
